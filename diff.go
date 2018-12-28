@@ -27,6 +27,7 @@ const (
 
 var (
 	colorStartYellow = ansi.ColorCode("yellow")
+	colorStartLightYellow = ansi.LightYellow
 	colorStartRed    = ansi.ColorCode("red")
 	colorStartGreen  = ansi.ColorCode("green")
 	colorReset       = ansi.ColorCode("reset")
@@ -36,6 +37,7 @@ var (
 // of items that describe difference between objects piece by piece
 type Diff struct {
 	items   []DiffItem
+	isArray bool
 	hasDiff bool
 }
 
@@ -79,7 +81,7 @@ func Compare(a, b interface{}) Diff {
 	jsonA, _ := json.Marshal(a)
 	jsonB, _ := json.Marshal(b)
 
-	return CompareStr(jsonA, jsonB)
+	return CompareStr(string(jsonA), string(jsonB))
 }
 
 // Compares serialized JSON strings
@@ -87,8 +89,8 @@ func CompareStr(jsonA, jsonB string) Diff {
 	mapA := map[string]interface{}{}
 	mapB := map[string]interface{}{}
 
-	json.Unmarshal(jsonA, &mapA)
-	json.Unmarshal(jsonB, &mapB)
+	json.Unmarshal([]byte(jsonA), &mapA)
+	json.Unmarshal([]byte(jsonB), &mapB)
 
 	return compareStringMaps(mapA, mapB)
 }
@@ -99,31 +101,37 @@ func CompareStr(jsonA, jsonB string) Diff {
 func Format(diff Diff) []byte {
 	buf := bytes.Buffer{}
 
-	writeItems(&buf, "", diff.Items())
+	writeItems(&buf, "", diff.Items(), diff.isArray)
 
 	return buf.Bytes()
 }
 
-func writeItems(writer io.Writer, prefix string, items []DiffItem) {
-	writer.Write([]byte{'{'})
+func writeItems(writer io.Writer, prefix string, items []DiffItem, isArray bool) {
+	if isArray {
+		writer.Write([]byte{'['})
+	} else {
+		writer.Write([]byte{'{'})
+	}
 	last := len(items) - 1
 
-	prefixNotEqualsA := prefix + "<> "
-	prefixNotEqualsB := prefix + "** "
-	prefixAdded := prefix + "<< "
-	prefixRemoved := prefix + ">> "
+	prefixNotEqualsA := prefix + indentation + "<> "
+	prefixNotEqualsB := prefix + indentation + "** "
+	prefixAdded := prefix + indentation + "<< "
+	prefixRemoved := prefix + indentation + ">> "
 
 	for i, item := range items {
 		writer.Write([]byte{'\n'})
 
 		switch item.Resolution {
 		case TypeEquals:
-			writeItem(writer, prefix, item.Key, item.ValueA, i < last)
+			writeItem(writer, prefix + indentation, item.Key, item.ValueA, i < last)
 		case TypeNotEquals:
 			writer.Write([]byte(colorStartYellow))
 
 			writeItem(writer, prefixNotEqualsA, item.Key, item.ValueA, i < last)
 			writer.Write([]byte{'\n'})
+			
+			writer.Write([]byte(colorStartLightYellow))
 			writeItem(writer, prefixNotEqualsB, item.Key, item.ValueB, i < last)
 
 			writer.Write([]byte(colorReset))
@@ -136,9 +144,14 @@ func writeItems(writer io.Writer, prefix string, items []DiffItem) {
 			writeItem(writer, prefixRemoved, item.Key, item.ValueA, i < last)
 			writer.Write([]byte(colorReset))
 		case TypeDiff:
+			isSubArray := item.ValueA.(bool)
 			subdiff := item.ValueB.([]DiffItem)
-			fmt.Fprintf(writer, "%s\"%s\": ", prefix, item.Key)
-			writeItems(writer, prefix+indentation, subdiff)
+			if isArray {
+				fmt.Fprint(writer, prefix + indentation)
+			} else {
+				fmt.Fprintf(writer, "%s\"%s\": ", prefix + indentation, item.Key)
+			}
+			writeItems(writer, prefix + indentation, subdiff, isSubArray)
 			if i < last {
 				writer.Write([]byte{','})
 			}
@@ -146,11 +159,19 @@ func writeItems(writer io.Writer, prefix string, items []DiffItem) {
 
 	}
 
-	fmt.Fprintf(writer, "\n%s}", prefix)
+	if isArray {
+		fmt.Fprintf(writer, "\n%s]", prefix)
+	} else {
+		fmt.Fprintf(writer, "\n%s}", prefix)
+	}
 }
 
 func writeItem(writer io.Writer, prefix, key string, value interface{}, isNotLast bool) {
-	fmt.Fprintf(writer, "%s\"%s\": ", prefix, key)
+	if len(key) > 0 {
+		fmt.Fprintf(writer, "%s\"%s\": ", prefix, key)
+	} else {
+		writer.Write([]byte(prefix))
+	}
 	serialized, _ := json.Marshal(value)
 
 	writer.Write(serialized)
@@ -185,7 +206,9 @@ func compare(A, B interface{}) (ResolutionType, Diff) {
 }
 
 func compareArrays(A, B []interface{}) Diff {
-	result := Diff{}
+	result := Diff{
+		isArray: true,
+	}
 
 	minLength := len(A)
 	if len(A) > len(B) {
@@ -201,7 +224,7 @@ func compareArrays(A, B []interface{}) Diff {
 		case TypeNotEquals:
 			result.Add(DiffItem{"", A[i], TypeNotEquals, B[i]})
 		case TypeDiff:
-			result.Add(DiffItem{"", nil, TypeDiff, subdiff.Items()})
+			result.Add(DiffItem{"", subdiff.isArray, TypeDiff, subdiff.Items()})
 		}
 	}
 
@@ -239,7 +262,7 @@ func compareStringMaps(A, B map[string]interface{}) Diff {
 		case TypeNotEquals:
 			result.Add(DiffItem{kA, vA, TypeNotEquals, vB})
 		case TypeDiff:
-			result.Add(DiffItem{kA, nil, TypeDiff, subdiff.Items()})
+			result.Add(DiffItem{kA, subdiff.isArray, TypeDiff, subdiff.Items()})
 		}
 	}
 

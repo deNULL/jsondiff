@@ -22,7 +22,7 @@ const (
 	TypeRemoved
 	TypeDiff
 
-	indentation = "    "
+	indentation = "  "
 )
 
 var (

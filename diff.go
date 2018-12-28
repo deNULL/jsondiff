@@ -76,11 +76,16 @@ func (m byKey) Swap(i, j int)      { m[i], m[j] = m[j], m[i] }
 // Note: if objects are equal, all diff items will have Resolution of
 // type TypeEquals
 func Compare(a, b interface{}) Diff {
-	mapA := map[string]interface{}{}
-	mapB := map[string]interface{}{}
-
 	jsonA, _ := json.Marshal(a)
 	jsonB, _ := json.Marshal(b)
+
+	return CompareStr(jsonA, jsonB)
+}
+
+// Compares serialized JSON strings
+func CompareStr(jsonA, jsonB string) Diff {
+	mapA := map[string]interface{}{}
+	mapB := map[string]interface{}{}
 
 	json.Unmarshal(jsonA, &mapA)
 	json.Unmarshal(jsonB, &mapB)
